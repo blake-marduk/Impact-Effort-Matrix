@@ -1,0 +1,346 @@
+#Each code line will contain an explaination of what it does above it. 
+
+import tkinter as tk
+from tkinter import filedialog, messagebox
+import pandas as pd
+import numpy as np
+import seaborn as sns
+import matplotlib.pyplot as plt
+import matplotlib.backends.backend_svg
+import os
+import openpyxl
+
+# ==========================================
+# INSTRUCTIONS FOR TERMINAL OUTPUT
+# ==========================================
+# Define the instructions as a multi-line string
+# Indentation within the string matters for how it looks in the terminal
+instructions = """
+--------------------------------------------------
+   Impact & Effort Matrix Generator - Instructions
+--------------------------------------------------
+
+Welcome! This tool helps you visualize initiatives on an Impact vs. Effort matrix.
+
+How to Use:
+
+1.  **Input File:**
+    * Click the top "Browse" button to select your input file.
+    * You can select either an Excel file (.xlsx, .xls) or a CSV file (.csv).
+    * If you select Excel, you'll be asked where to save a temporary converted CSV file.
+    * Your input file MUST contain three columns named:
+        - 'Initiative': The name or description of the task.
+        - 'Impact': The estimated impact (see recommended values).
+        - 'Effort': The estimated effort (see recommended values).
+    * **CRITICAL:** Ensure there are NO commas (,) anywhere in your input file text, especially within initiative names, before processing. Use CSV format if possible.
+    * **Formatting Initiatives:** For longer initiative names, manually add line breaks (press Enter/Return) within the cell text in your source file (Excel/Google Sheet) roughly every 4 words to prevent text overlap on the chart.
+    * **Recommended Impact Values:** 'Extremely Low', 'Low', 'Medium', 'High', 'Extremely High'
+    * **Recommended Effort Values:** 'S', 'M', 'L', 'XL'
+    * Missing Impact/Effort values will be treated as 'Not Defined'.
+
+2.  **Output Folder:**
+    * Click the second "Browse" button to select the folder where the output files will be saved.
+
+3.  **Generate Matrix:**
+    * Click the "Generate Matrix" button.
+    * Processing may take a few moments. The status will update below the buttons.
+
+4.  **Output Files:**
+    * Two files will be created in your selected output folder:
+        - 'Impact_Effort_matrix.svg': A vector image of your matrix chart.
+        - 'output_matrix.csv': A CSV file representing the pivoted matrix data.
+
+--------------------------------------------------
+Now, please use the GUI window to select your files and generate the matrix.
+--------------------------------------------------
+"""
+
+# Print the instructions to the console
+print(instructions)
+# ==========================================
+# END OF INSTRUCTIONS
+# ==========================================
+# --- Start of your original data processing functions ---
+pd.set_option('display.max_rows', None)
+pd.set_option('display.max_columns', None)
+
+# Define ordered lists for 'Effort' and 'Impact' (moved here for global access)
+Effort_order = ['Not Defined', 'XL', 'L', 'M', 'S']
+Impact_order = ['Not Defined', 'Extremely Low', 'Low', 'Medium', 'High', 'Extremely High']
+
+def format_initiatives(initiatives_list):
+    """Formats a list of initiatives with newlines, ensuring all elements are strings."""
+    if isinstance(initiatives_list, list):
+        string_list = [str(item) for item in initiatives_list]
+        return '\n'.join(string_list)
+    else:
+        return str(initiatives_list)
+
+def process_data(input_file_path, output_folder_path):
+    """
+    Processes the CSV data, generates the Impact & Effort Matrix,
+    saves it as a CSV and a PNG image in the specified output folder.
+    """
+    try:
+        # Read the CSV file into a DataFrame
+        df_v5 = pd.read_csv(input_file_path) # Changed to use the provided input path
+        total_initiatives = len(df_v5) # Get total number of initiatives
+
+        # Display the head of the DataFrame (optional, can be removed for GUI)
+        print("Head of DataFrame:")
+        print(df_v5.head().to_string())
+
+        # Print the column names and their data types (optional, can be removed for GUI)
+        print("\nDataFrame Info:")
+        print(df_v5.info())
+
+        # Fill in missing values of `Impact` with 'Not Defined'
+        df_v5['Impact'] = df_v5['Impact'].fillna('Not Defined')
+
+        # Fill in missing values of 'Effort' with 'Not Defined'
+        df_v5['Effort'] = df_v5['Effort'].fillna('Not Defined')
+
+        # Convert 'Effort' and 'Impact' to categorical with specified order
+        df_v5['Effort'] = pd.Categorical(df_v5['Effort'], categories=Effort_order, ordered=True)
+        df_v5['Impact'] = pd.Categorical(df_v5['Impact'], categories=Impact_order, ordered=True)
+
+        # Group by 'Impact' and 'Effort', aggregate initiatives into a list
+        df_grouped = df_v5.groupby(['Impact', 'Effort'], observed=True)['Initiative'].apply(list).reset_index(name='Initiatives')  #Observed must be TRUE
+
+        df_grouped['Initiatives_Formatted'] = df_grouped['Initiatives'].apply(format_initiatives)
+
+        # Pivot the DataFrame to create the 'Impact' & 'Effort' Matrix with formatted initiatives
+        pivot_df_formatted = df_grouped.pivot(index='Effort', columns='Impact', values='Initiatives_Formatted')
+        pivot_df_formatted = pivot_df_formatted.reindex(index=Effort_order, columns=Impact_order, fill_value="")
+
+        # --- Integration for Heatmap-like Visualization ---
+
+        # Create a numerical DataFrame for the heatmap
+        heatmap_data = pd.DataFrame(index=Effort_order, columns=Impact_order)
+
+        # Define numerical mappings
+        Effort_mapping = {'Not Defined': 1, 'S': 5, 'M': 4, 'L': 3, 'XL': 2}
+        Impact_mapping = {'Not Defined': 1, 'Extremely Low': 2, 'Low': 3, 'Medium': 4, 'High': 5, 'Extremely High': 6}
+
+        for Effort in Effort_order:
+            for Impact in Impact_order:
+                # Assign a numerical value based on Effort and Impact
+                effort_num = Effort_mapping.get(Effort, 1)                             #################Major Change
+                impact_num = Impact_mapping.get(Impact, 1)
+                heatmap_data.loc[Effort, Impact] = Effort_mapping.get(Effort, 0) * Impact_mapping.get(Impact, 0)
+
+        # Explicitly convert heatmap_data to numeric
+        heatmap_data = heatmap_data.apply(pd.to_numeric)
+
+        # --- DEBUGGING (Keep these for now) ---
+        print("\nData type of heatmap_data AFTER conversion:")
+        print(heatmap_data.dtypes)
+        print("\nHead of heatmap_data AFTER conversion:")
+        print(heatmap_data.head().to_string())
+        print("\nHeatmap Data")
+        print(heatmap_data)
+        print(heatmap_data.iloc[0,0])
+        # --- END DEBUGGING ---
+
+
+
+        # Create the heatmap
+        FIXED_FIGURE_WIDTH = 36.0
+        num_heatmap_rows = len(Effort_order)
+        base_height_per_cell = 4.0
+        height_increment_per_25_initiatives = 0.4
+        additional_height_per_cell = (total_initiatives / 25.0) * height_increment_per_25_initiatives
+        effective_height_per_cell = base_height_per_cell + additional_height_per_cell
+        fig_width = FIXED_FIGURE_WIDTH
+        fig_height = num_heatmap_rows * effective_height_per_cell
+        min_fig_height, max_fig_height = 10, 30
+        fig_height = max(min_fig_height, min(fig_height, max_fig_height))
+        print(f"\nFigure size: Width={fig_width:.2f} (fixed), Height={fig_height:.2f} (dynamic for {total_initiatives} initiatives).")
+        plt.figure(figsize=(fig_width, fig_height))
+        palette = sns.color_palette(["#000000", "#5B6771", "#9E1B32"])     #This will set colors to Equifax RED and Gray #n=len(heatmap_data.values.flatten()), h_pos=0
+        ax = sns.heatmap(heatmap_data, annot=False, cmap=palette, cbar=True, linewidths=.5, linecolor='black')
+
+        #CAN DELETE THIS LATER
+        print("\npivot_df_fomatted BEFORE text overlay:")
+        print(pivot_df_formatted)
+        print(f"Shape of heatmap_data: {heatmap_data.shape}")
+        print(f"Shape of pivot_df_formatted: {pivot_df_formatted.shape}")
+
+        #CAN DELETE THIS LATER ^^^
+
+        # Overlay the initiatives text on the heatmap cells
+        # Iterate through the *heatmap* grid coordinates
+        for i, Effort_val in enumerate(heatmap_data.index):
+             for j, Impact_val in enumerate(heatmap_data.columns):
+                # Find the corresponding text in pivot_df_formatted
+                # Check if the indices/columns exist in the pivoted data (due to `observed=True` or missing data)
+                 if Effort_val in pivot_df_formatted.index and Impact_val in pivot_df_formatted.columns:
+                    initiative_text = pivot_df_formatted.loc[Effort_val, Impact_val]
+                    # Check if the text is not null/NaN and not an empty string before plotting
+                    if pd.notna(initiative_text) and str(initiative_text).strip():
+                        # Add text: Use numerical indices (i, j) + 0.5 for center alignment
+                        # Explicitly convert text to string just in case
+                        ax.text(j + 0.5, i + 0.5, str(initiative_text),
+                                ha='center', va='center', color='white', fontsize=10, wrap=True) # Added wrap=True
+
+        # Set the title and labels
+        plt.title('Impact & Effort Matrix with Initiatives', fontsize=16)
+        plt.xlabel('Impact', fontsize=12)
+        plt.ylabel('Effort', fontsize=12)
+
+        # Adjust layout
+        plt.tight_layout()
+        # Save as a SVG or a PNG in the specified output folder
+        output_image_path = os.path.join(output_folder_path, 'Impact_Effort_matrix.svg') # Changed to save in output folder #Can change to SVG or PNG
+        plt.savefig(output_image_path, bbox_inches='tight')
+        plt.close() # Close the plot to free up resources
+
+        # Save the formatted pivot table to CSV in the specified output folder
+        output_csv_path = os.path.join(output_folder_path, 'output_matrix.csv') # Changed output filename
+        pivot_df_formatted.to_csv(output_csv_path)
+
+        return "Processing complete! Matrix saved to {} and image saved to {}".format(output_csv_path, output_image_path)
+    except FileNotFoundError:
+         # Use messagebox for GUI feedback
+        messagebox.showerror("Error", f"Input file not found: {input_file_path}")
+        return f"Error: Input file not found: {input_file_path}" # Also return for console/logging
+    except KeyError as e:
+        messagebox.showerror("Error", f"Missing expected column in input file: {e}. Ensure 'Initiative', 'Impact', and 'Effort' columns exist.")
+        return f"An error occurred during processing: Missing column {e}"
+    except Exception as e:
+        # Provide more specific error feedback in the GUI
+        error_message = f"An unexpected error occurred during processing: {type(e).__name__} - {e}"
+        messagebox.showerror("Error", error_message)
+        print(f"Error details: {e}") # Print detailed traceback to console for debugging
+        import traceback
+        traceback.print_exc() # Print full traceback
+        return error_message # Return the error message for the GUI label
+    
+
+    #Convert Excel Files to a CSV
+def convert_excel_to_csv(excel_file_path, output_folder_path):
+    """Converts an Excel file to a CSV file."""
+    try:
+        df = pd.read_excel(excel_file_path, engine='openpyxl')  #May need to remove "engine=openpyxl" or edit to engine='openpyxl')
+    except Exception as e:
+        messagebox.showerror("Error", f"Error reading Excel file: {e}")
+        return None
+    try:
+        csv_file_path = os.path.join(output_folder_path, "converted.csv")
+        df.to_csv(csv_file_path, index=False)
+        return csv_file_path
+    except Exception as e:
+        messagebox.showerror("Error", f"Error saving to CSV: {e}")
+        return None
+# --- End of original data processing functions ---
+
+
+# --- Tkinter GUI ---
+
+#Calls Tkinter to allow user to select a CSV, and if they select something other than a csv, it will call convert_excel_to_csv.
+def browse_input_file():
+    global input_file_path
+    filepath = filedialog.askopenfilename(filetypes=[("CSV and Excel files", "*.csv;*.xlsx;*.xls")])
+    if filepath:  # Only update if a file was selected
+        if filepath.lower().endswith((".xlsx", ".xls")):
+            output_folder = filedialog.askdirectory(title="Select folder to save converted CSV")
+            if output_folder:
+                csv_path = convert_excel_to_csv(filepath, output_folder)
+                if csv_path:
+                    input_file_path.set(csv_path)
+                    input_file_entry.delete(0, tk.END)
+                    input_file_entry.insert(0, csv_path)
+                else:
+                    messagebox.showerror("Error", "Could not convert Excel file.")
+                    return
+            else:
+                messagebox.showerror("Error", "Output folder not selected. Excel conversion canceled.")
+                return
+        else:  # It's a CSV file
+            input_file_path.set(filepath)
+            input_file_entry.delete(0, tk.END)
+            input_file_entry.insert(0, filepath)
+
+def browse_output_folder():
+    global output_folder_path
+    folderpath = filedialog.askdirectory()
+    if folderpath:  # Only update if a folder was selected
+        output_folder_path.set(folderpath)
+        output_folder_entry.delete(0, tk.END)
+        output_folder_entry.insert(0, folderpath)
+
+def run_processing_gui():
+    print(f"Type of input_file_path in run_processing_gui: {type(input_file_path)}")
+    print(f"Type of output_folder_path in run_processing_gui: {type(output_folder_path)}")
+    input_path = input_file_path.get() # Get the csv path from the Entry widget
+    output_path = output_folder_path.get() # Get the folder path from the Entry widget
+
+    if not input_path or not output_path:
+        messagebox.showwarning("Input Required", "Please select both an input file and an output folder.")
+        result_label.config(text="Input file and output folder required.",fg="orange")
+        return
+    result_label.config(text="Processing...Please Wait.", fg="blue")
+    root.update_idletasks()
+    result_message = process_data(input_path, output_path)
+    print(f"DEBUG: process_data completed. Result type: {type(result_message)}, Value: {result_message}")
+    # Display result/error in the label
+    # Check if the message starts with "Error" or "An error" for simple classification
+
+    # --- Update the GUI label based on the result ---
+    # Check if result_message is a string before calling methods
+    if isinstance(result_message, str):
+        # Use strip() and lower() for robust checking
+        if result_message.strip().lower().startswith("error") or "error occurred" in result_message.strip().lower():
+            # Error Case: Display the specific error message from process_data
+            result_label.config(text=result_message, fg="red")
+        else:
+            # Success Case: Display "Matrix Generated!"
+            success_display_message = "Matrix Generated!" # Your desired message
+            result_label.config(text=success_display_message, fg="green")
+            # Optional: Still print the full details to the console for confirmation
+            print(f"INFO: Full success message: {result_message}")
+    else:
+        # Handle unexpected non-string return types (fallback)
+        error_text = f"Unexpected return type from processing: {type(result_message)}"
+        result_label.config(text=error_text, fg="purple") # Use a distinct color
+        print(f"ERROR: process_data returned non-string: {result_message}")
+
+# Main window
+root = tk.Tk()
+root.title("Impact & Effort Matrix Generator")
+
+# Input File Selection
+input_label = tk.Label(root, text="Input CSV/Excel File:")
+input_label.grid(row=0, column=0, padx=5, pady=5, sticky="w")
+input_file_path = tk.StringVar() # Use StringVar to get value from Entry
+input_file_entry = tk.Entry(root, width=50, textvariable=input_file_path)
+input_file_entry.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
+input_button = tk.Button(root, text="Browse", command=browse_input_file) # Changed command
+input_button.grid(row=0, column=2, padx=5, pady=5)
+
+# Output Folder Selection
+output_label = tk.Label(root, text="Output Folder:")
+output_label.grid(row=1, column=0, padx=5, pady=5, sticky="w")
+output_folder_path = tk.StringVar() # Use StringVar
+output_folder_entry = tk.Entry(root, width=50, textvariable=output_folder_path)
+output_folder_entry.grid(row=1, column=1, padx=5, pady=5, sticky="ew")
+output_button = tk.Button(root, text="Browse", command=browse_output_folder)
+output_button.grid(row=1, column=2, padx=5, pady=5)
+
+# Run Button
+run_button = tk.Button(root, text="Generate Matrix", command=run_processing_gui) # Changed button text and command
+run_button.grid(row=2, column=0, columnspan=3, pady=10)
+
+# Result Label
+result_label = tk.Label(root, text="")
+result_label.grid(row=3, column=0, columnspan=3, pady=5)
+
+# Make window slightly resizable
+root.columnconfigure(1, weight=1)
+
+root.mainloop()
+
+
+
+
+###Math Library use Ceiling function. Assume highest value from equation. Rather than Scale input, scale based on number of number of entries
